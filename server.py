@@ -166,22 +166,34 @@ def make_crud(table: str, model, fields: List[str]):
         cols = ", ".join(fields)
         placeholders = ", ".join(["?"] * len(fields))
         values = [getattr(item, f) for f in fields]
-        with get_db() as db:
-            cur = db.execute(f"INSERT INTO {table} ({cols}) VALUES ({placeholders})", values)
-            new_id = cur.lastrowid
-            row = db.execute(f"SELECT * FROM {table} WHERE id=?", (new_id,)).fetchone()
-            return row_to_dict(row)
+        try:
+            with get_db() as db:
+                cur = db.execute(f"INSERT INTO {table} ({cols}) VALUES ({placeholders})", values)
+                new_id = cur.lastrowid
+                row = db.execute(f"SELECT * FROM {table} WHERE id=?", (new_id,)).fetchone()
+                return row_to_dict(row)
+        except sqlite3.IntegrityError:
+            raise HTTPException(
+                status_code=400,
+                detail="Bog'liq ID topilmadi. Avval tegishli Transport/Ota-ona/Haydovchi yozuvini qo'shing, keyin shu ID'ni kiriting (yoki maydonni bo'sh qoldiring)."
+            )
 
     def update_item(item_id: int, item: model):
         set_clause = ", ".join([f"{f}=?" for f in fields])
         values = [getattr(item, f) for f in fields] + [item_id]
-        with get_db() as db:
-            existing = db.execute(f"SELECT * FROM {table} WHERE id=?", (item_id,)).fetchone()
-            if not existing:
-                raise HTTPException(status_code=404, detail="Topilmadi")
-            db.execute(f"UPDATE {table} SET {set_clause} WHERE id=?", values)
-            row = db.execute(f"SELECT * FROM {table} WHERE id=?", (item_id,)).fetchone()
-            return row_to_dict(row)
+        try:
+            with get_db() as db:
+                existing = db.execute(f"SELECT * FROM {table} WHERE id=?", (item_id,)).fetchone()
+                if not existing:
+                    raise HTTPException(status_code=404, detail="Topilmadi")
+                db.execute(f"UPDATE {table} SET {set_clause} WHERE id=?", values)
+                row = db.execute(f"SELECT * FROM {table} WHERE id=?", (item_id,)).fetchone()
+                return row_to_dict(row)
+        except sqlite3.IntegrityError:
+            raise HTTPException(
+                status_code=400,
+                detail="Bog'liq ID topilmadi. Avval tegishli Transport/Ota-ona/Haydovchi yozuvini qo'shing, keyin shu ID'ni kiriting (yoki maydonni bo'sh qoldiring)."
+            )
 
     def delete_item(item_id: int):
         with get_db() as db:
