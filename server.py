@@ -14,9 +14,6 @@ from pydantic import BaseModel
 DB_PATH = os.environ.get("PUMPA_DB_PATH", "pumpa.db")
 ADMIN_USERNAME = os.environ.get("ADMIN_USERNAME", "admin")
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "admin123")
-# Eslatma: Render'ning bepul tarifida disk vaqtinchalik (ephemeral) — server qayta
-# ishga tushganda pumpa.db fayli o'chib ketishi mumkin. Doimiy saqlash kerak bo'lsa,
-# Render'da "Persistent Disk" ulash yoki tashqi Postgres bazaga o'tish kerak bo'ladi.
 
 app = FastAPI(title="PUMPA Kids Transport")
 app.add_middleware(
@@ -70,7 +67,6 @@ def init_db():
                 telegram_chat_id TEXT
             )
         """)
-        # Eski bazalarda bu ustunlar bo'lmasligi mumkin — mavjud bo'lmasa qo'shamiz
         existing_cols = [r["name"] for r in db.execute("PRAGMA table_info(ota_onalar)").fetchall()]
         if "pairing_code" not in existing_cols:
             db.execute("ALTER TABLE ota_onalar ADD COLUMN pairing_code TEXT")
@@ -134,7 +130,7 @@ def broadcast_to_parents(text: str):
 
 
 def haversine_metres(lat1, lon1, lat2, lon2):
-    R = 6371000  # Yer radiusi, metrda
+    R = 6371000
     phi1, phi2 = math.radians(lat1), math.radians(lat2)
     dphi = math.radians(lat2 - lat1)
     dlambda = math.radians(lon2 - lon1)
@@ -157,7 +153,7 @@ def set_setting(key: str, value: str):
         )
 
 # ---------------------------------------------------------------------------
-# Admin autentifikatsiya (oddiy token, xotirada saqlanadi)
+# Admin autentifikatsiya
 # ---------------------------------------------------------------------------
 active_tokens = set()
 
@@ -221,7 +217,7 @@ class Bola(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Umumiy CRUD generatori (4 ta jadval uchun bir xil naqsh)
+# Umumiy CRUD generatori
 # ---------------------------------------------------------------------------
 def row_to_dict(row: sqlite3.Row) -> dict:
     return {k: row[k] for k in row.keys()}
@@ -290,7 +286,7 @@ otaona_list, otaona_create, otaona_update, otaona_delete = make_crud(
 
 
 def otaona_create_with_code(item: OtaOna):
-    code = secrets.token_hex(3).upper()  # masalan "A1B2C3"
+    code = secrets.token_hex(3).upper()
     with get_db() as db:
         cur = db.execute(
             "INSERT INTO ota_onalar (ism, telefon, pairing_code) VALUES (?, ?, ?)",
@@ -307,34 +303,27 @@ bola_list, bola_create, bola_update, bola_delete = make_crud(
     "bolalar", Bola, ["ism", "yosh", "ota_ona_id", "transport_id", "avatar"]
 )
 
-# --- Transportlar ---
 app.get("/admin/transportlar", dependencies=[Depends(require_admin)])(transport_list)
 app.post("/admin/transportlar", dependencies=[Depends(require_admin)])(transport_create)
 app.put("/admin/transportlar/{item_id}", dependencies=[Depends(require_admin)])(transport_update)
 app.delete("/admin/transportlar/{item_id}", dependencies=[Depends(require_admin)])(transport_delete)
 
-# --- Haydovchilar ---
 app.get("/admin/haydovchilar", dependencies=[Depends(require_admin)])(haydovchi_list)
 app.post("/admin/haydovchilar", dependencies=[Depends(require_admin)])(haydovchi_create)
 app.put("/admin/haydovchilar/{item_id}", dependencies=[Depends(require_admin)])(haydovchi_update)
 app.delete("/admin/haydovchilar/{item_id}", dependencies=[Depends(require_admin)])(haydovchi_delete)
 
-# --- Ota-onalar ---
 app.get("/admin/ota-onalar", dependencies=[Depends(require_admin)])(otaona_list)
 app.post("/admin/ota-onalar", dependencies=[Depends(require_admin)])(otaona_create)
 app.put("/admin/ota-onalar/{item_id}", dependencies=[Depends(require_admin)])(otaona_update)
 app.delete("/admin/ota-onalar/{item_id}", dependencies=[Depends(require_admin)])(otaona_delete)
 
-# --- Bolalar ---
 app.get("/admin/bolalar", dependencies=[Depends(require_admin)])(bola_list)
 app.post("/admin/bolalar", dependencies=[Depends(require_admin)])(bola_create)
 app.put("/admin/bolalar/{item_id}", dependencies=[Depends(require_admin)])(bola_update)
 app.delete("/admin/bolalar/{item_id}", dependencies=[Depends(require_admin)])(bola_delete)
 
 
-# ---------------------------------------------------------------------------
-# Sozlamalar (bog'cha koordinatalari) — admin panel orqali o'rnatiladi
-# ---------------------------------------------------------------------------
 class BogchaSozlama(BaseModel):
     bogcha_lat: Optional[float] = None
     bogcha_lng: Optional[float] = None
@@ -357,9 +346,6 @@ def save_sozlamalar(body: BogchaSozlama):
     return {"success": True}
 
 
-# ---------------------------------------------------------------------------
-# Telegram webhook — ota-onalar botga pairing_code yuborib o'zini ulaydi
-# ---------------------------------------------------------------------------
 @app.post("/telegram/webhook")
 async def telegram_webhook(update: dict):
     message = update.get("message") or {}
@@ -388,10 +374,6 @@ async def telegram_webhook(update: dict):
     return {"ok": True}
 
 
-# ---------------------------------------------------------------------------
-# Eski GPS/holat endpointlari (driver.html / parent.html hozircha shularni
-# ishlatadi — kelgusi bosqichda transport_id bo'yicha ko'p-avtobusli qilinadi)
-# ---------------------------------------------------------------------------
 class Location(BaseModel):
     latitude: float
     longitude: float
@@ -421,25 +403,4 @@ def set_location(x: Location):
         distance = haversine_metres(x.latitude, x.longitude, float(bogcha_lat), float(bogcha_lng))
         if distance <= 500 and not trip_state["yaqinlashdi_xabar_yuborildi"]:
             trip_state["yaqinlashdi_xabar_yuborildi"] = True
-            broadcast_to_parents("🏁 PUMPA Kids Transport yaqinlashib qoldi — shoshiling!")
-
-    return {"success": True, "location": location}
-
-
-@app.get("/driver/location")
-def get_location():
-    return location
-
-
-@app.post("/driver/route")
-def set_route(x: RouteStatus):
-    route["status"] = x.status
-    if x.status == "started":
-        trip_state["yaqinlashdi_xabar_yuborildi"] = False
-        broadcast_to_parents("🚐 PUMPA Kids Transport yo'lga chiqdi — shoshiling!")
-    return {"success": True, "status": route["status"]}
-
-
-@app.get("/driver/route")
-def get_route():
-    return route
+            broadcast_to_parents("🏁 PUMPA Kids Transport yaqinlashib
